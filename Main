@@ -1,0 +1,221 @@
+#include <stdio.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/types.h>
+#include<sys/wait.h> 
+#include <stdlib.h>     
+#include <iostream>
+#include <vector>
+#include <sstream>
+#include <fcntl.h>
+
+
+using namespace std;
+
+	vector<string> hist;
+	vector<string> tokens;
+	bool ioFile;
+	int indexofIO;
+
+
+
+int getInput(string input) {
+    //cout << "Enter a phrase: ";
+	//getline(cin, input);
+	tokens.clear();
+	ioFile=false;
+
+	//adds each input to the history vector as long as the input is not empty
+	if(input != ""){
+	hist.push_back(input);
+ 
+ 	stringstream check(input);
+ 	string singleToken;
+ 
+	 //tokenizes the input string
+	 while(getline(check, singleToken, ' ')){
+		//Checks if their is an input or output token and finds what index it is at that point
+		if(singleToken=="<" || singleToken==">" || singleToken=="|"){
+			ioFile=true;
+			indexofIO=tokens.size();
+		}
+	        tokens.push_back(singleToken);
+	     }
+ 	return tokens.size();
+	}
+}
+
+void printHist(){
+	for(int i = 0; i<hist.size(); i++){
+		cout << hist[i] << endl;
+	}
+}
+
+
+int  main()  {  
+
+	bool running = true;
+
+	int org = dup(1);
+
+	while(running){
+
+		//Get the Line
+		string line = "";
+		getline(cin, line);
+		
+		getInput(line);
+
+		if(line =="history"){
+			printHist();
+		}else if(line=="exit"){
+			return 0;
+		}else if(line=="pwd"){
+			cout<<getcwd(0,0)<<endl;		
+		}else if(ioFile){
+	//OUTPUT FILES
+			if(tokens[indexofIO]==">"){
+			int fd = open((char*)tokens[indexofIO+1].c_str(), O_WRONLY | O_CREAT);
+			if (fd < 0) {
+				cout << "Can not open the file" << endl;
+				exit(1);
+			}
+			int origin = dup(1);
+
+			char * cmd[indexofIO+1];
+
+			for(int i = 0; i<indexofIO; i++){
+				cmd[i]=(char*) tokens[i].c_str();
+			}
+
+			cmd[indexofIO] = NULL;
+
+			pid_t p;
+			p = fork();
+			dup2(fd, 1);
+			if(p == 0){
+
+				execvp(cmd[0], cmd);
+    			}else if(p<0){
+        			cout<<"error";
+    			}else{
+				wait(0);
+				dup2(org, 1);
+				fflush(stdout);
+    			}	
+	//INPUT FILES
+			}else if(tokens[indexofIO]=="<"){
+				int fd = open((char*)tokens[indexofIO+1].c_str(), O_RDONLY);
+				if (fd < 0) {
+					cout << "Can not open the file" << endl;
+					exit(1);
+				}
+				int origin = dup(0);
+
+				char * cmd[indexofIO+1];
+				for(int i = 0; i<indexofIO; i++){
+					cmd[i]=(char*) tokens[i].c_str();
+				}
+				cmd[indexofIO] = NULL;
+				dup2(fd, 0);
+				pid_t p;
+				p = fork();
+				if(p == 0){
+					cout<<"Running"<<endl;
+					execvp(cmd[0], cmd);
+    				}else if(p<0){
+        				cout<<"error";
+    				}else{
+					wait(0);
+					close(fd);
+					dup2(org, 0);
+					//fflush(stdout);
+    				}
+			}else if(tokens[indexofIO]=="|"){
+				int     fd[2], nbytes;
+				// two arrays for each side of |
+				//Size of index for | + 1 for Null value
+				char * cmd[indexofIO+1];
+				//Size of second array is the token size - index,  
+				//since token.size() is one large than its index we just need that and dont need a +1
+				char * cmd2[tokens.size()-(indexofIO)];
+	      			int returnstatus;
+				// 2 children, checks pipe was created
+	   			pid_t p;
+	   			pid_t p2;
+	   			returnstatus = pipe(fd);
+	   			if (returnstatus == -1) {
+	      				printf("Unable to create pipe\n");
+	      				return 1;
+	   			}
+				//fills cmd with index of tokens prior to the |
+				for(int i = 0; i<indexofIO; i++){
+					cmd[i]=(char*) tokens[i].c_str();
+
+				}
+				// fills cmd2 with indexes of tokens after the | 
+				for(int i = 0; i<tokens.size()-(indexofIO+1); i++){
+					cmd2[i]=(char*) tokens[i+indexofIO+1].c_str();
+				}
+				
+				//Set the last index of each equal to NULL
+				cmd[indexofIO] = NULL;
+				cmd2[tokens.size()-indexofIO] = NULL;
+				
+				p = fork();
+				
+				if(p == 0){
+					//cout<<"Running c1"<<endl;
+					//Writes to  Pipe
+					dup2(fd[1], 1);
+					execvp(cmd[0], cmd);
+					close(fd[1]);
+	    			}else if(p<0){
+					cout<<"error";
+	    			}else{
+					wait(0);
+					//cout<<"Running p1"<<endl;
+					// New Fork for second program
+					p2=fork();
+					if(p2 == 0){
+						//cout<<"Running c2"<<endl;
+						// reads from pipe, and performs second program
+						dup2(fd[0], 0);
+						execvp(cmd2[0], cmd2);
+						close(fd[0]);
+	    				}else if(p2<0){
+						cout<<"error";
+	    				}else{
+						wait(0);
+						//cout<<"Exit"<<endl;
+	    				}
+				wait(0);
+    				}
+			}
+		}else{
+		// All other inputs will go through this
+			char * cmd[tokens.size()+1];
+			for(int i = 0; i<tokens.size(); i++){
+				cmd[i]=(char*) tokens[i].c_str();
+			}
+
+			cmd[tokens.size()] = NULL;
+
+			pid_t pid;
+    			pid = fork();
+
+    			if(pid == 0){
+				//cout<<"Start execvp"<<endl;
+				execvp(cmd[0], cmd);
+    			}else if(pid<0){
+        			cout<<"error";
+    			}else{ 
+				wait(0);
+				//cout<<"Ends execvp"<<endl;
+    			}
+		}
+
+	}
+	return 0;    
+}
+
